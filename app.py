@@ -102,14 +102,25 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── localStorage JS: persist + restore session_id across browser refreshes ────
-# Also generates a stable per-browser user_id so sessions are user-scoped.
+# ── localStorage JS ───────────────────────────────────────────────────────────
+# JS is the SOLE authority for writing user_id + session_id into the URL on
+# initial load.  Python never writes query params on first render — doing so
+# would race with JS and overwrite the localStorage-stored session with a new
+# random one, losing the user's history.
+#
+# Flow:
+#   1. User visits bare URL (no ?user= or ?session=)
+#   2. JS reads localStorage → builds correct params → redirects (<100 ms)
+#   3. Python re-runs with full params in URL → loads history as normal
+#   4. On refresh: URL already has params (Python set them via switch_session)
+#      → JS just syncs localStorage, no redirect needed
 st.components.v1.html("""
 <script>
 (function() {
     const params = new URLSearchParams(window.parent.location.search);
+    let changed = false;
 
-    // ── user_id: one per browser, never changes ──────────────────────────────
+    // ── user_id: stable per browser, never changes ───────────────────────────
     let userId = localStorage.getItem('ai_chat_user_id');
     if (!userId) {
         userId = 'u_' + Math.random().toString(36).slice(2, 10);
@@ -117,35 +128,39 @@ st.components.v1.html("""
     }
     if (!params.get('user')) {
         params.set('user', userId);
+        changed = true;
     }
 
-    // ── session_id: restored from localStorage if not in URL ────────────────
-    const urlSession = params.get('session');
-    const stored = localStorage.getItem('ai_chat_session_id');
-    if (!urlSession && stored) {
-        params.set('session', stored);
-    } else if (urlSession) {
-        localStorage.setItem('ai_chat_session_id', urlSession);
+    // ── session_id: restore from localStorage or mint a new one ─────────────
+    let sessionId = params.get('session');
+    if (!sessionId) {
+        // No session in URL — check localStorage first, then create fresh
+        sessionId = localStorage.getItem('ai_chat_session_id');
+        if (!sessionId) {
+            sessionId = Math.random().toString(36).slice(2, 10);
+        }
+        params.set('session', sessionId);
+        changed = true;
     }
+    // Always keep localStorage in sync with whatever session is active in URL
+    localStorage.setItem('ai_chat_session_id', sessionId);
 
-    const newSearch = params.toString();
-    if (window.parent.location.search.slice(1) !== newSearch) {
-        window.parent.location.search = newSearch;
+    if (changed) {
+        window.parent.location.search = params.toString();
     }
 })();
 </script>
 """, height=0)
 
-# ── Session ID + User ID: read from query params or generate ─────────────────
-if "user_id" not in st.session_state:
-    qu = st.query_params.get("user")
-    st.session_state.user_id = qu if qu else f"u_{uuid.uuid4().hex[:8]}"
-
-if "session_id" not in st.session_state:
-    qp = st.query_params.get("session")
-    st.session_state.session_id = qp if qp else str(uuid.uuid4())[:8]
-    if not qp:
-        st.query_params["session"] = st.session_state.session_id
+# ── Session ID + User ID: read ONLY from URL (JS wrote them above) ────────────
+# If the URL is missing params the JS redirect hasn't fired yet — stop and wait.
+if "user_id" not in st.session_state or "session_id" not in st.session_state:
+    _qu = st.query_params.get("user")
+    _qs = st.query_params.get("session")
+    if not _qu or not _qs:
+        st.stop()   # JS will redirect with correct params in <100 ms
+    st.session_state.user_id   = _qu
+    st.session_state.session_id = _qs
 
 
 def switch_session(new_id: str):
