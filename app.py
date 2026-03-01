@@ -153,13 +153,38 @@ st.components.v1.html("""
 """, height=0)
 
 # ── Session ID + User ID: read ONLY from URL (JS wrote them above) ────────────
-# If the URL is missing params the JS redirect hasn't fired yet — stop and wait.
+# If params are missing, JS redirect is still in flight — show a spinner and
+# halt. The page reloads with correct params in < 200 ms.
 if "user_id" not in st.session_state or "session_id" not in st.session_state:
     _qu = st.query_params.get("user")
     _qs = st.query_params.get("session")
     if not _qu or not _qs:
-        st.stop()   # JS will redirect with correct params in <100 ms
-    st.session_state.user_id   = _qu
+        st.markdown(
+            """
+            <style>
+            #loading-wrap {
+                display: flex; flex-direction: column;
+                align-items: center; justify-content: center;
+                height: 80vh; gap: 16px;
+            }
+            .spinner {
+                width: 40px; height: 40px;
+                border: 4px solid rgba(255,255,255,0.15);
+                border-top-color: #e63946;
+                border-radius: 50%;
+                animation: spin 0.7s linear infinite;
+            }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            </style>
+            <div id="loading-wrap">
+                <div class="spinner"></div>
+                <span style="opacity:0.5;font-size:0.9rem;">Starting session…</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.stop()
+    st.session_state.user_id    = _qu
     st.session_state.session_id = _qs
 
 
