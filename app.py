@@ -103,27 +103,44 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── localStorage JS: persist + restore session_id across browser refreshes ────
-# Reads localStorage on first load; if no ?session= in URL, redirects with it.
+# Also generates a stable per-browser user_id so sessions are user-scoped.
 st.components.v1.html("""
 <script>
 (function() {
     const params = new URLSearchParams(window.parent.location.search);
+
+    // ── user_id: one per browser, never changes ──────────────────────────────
+    let userId = localStorage.getItem('ai_chat_user_id');
+    if (!userId) {
+        userId = 'u_' + Math.random().toString(36).slice(2, 10);
+        localStorage.setItem('ai_chat_user_id', userId);
+    }
+    if (!params.get('user')) {
+        params.set('user', userId);
+    }
+
+    // ── session_id: restored from localStorage if not in URL ────────────────
     const urlSession = params.get('session');
     const stored = localStorage.getItem('ai_chat_session_id');
-
     if (!urlSession && stored) {
-        // Restore last session from localStorage
         params.set('session', stored);
-        window.parent.location.search = params.toString();
     } else if (urlSession) {
-        // Save current URL session to localStorage
         localStorage.setItem('ai_chat_session_id', urlSession);
+    }
+
+    const newSearch = params.toString();
+    if (window.parent.location.search.slice(1) !== newSearch) {
+        window.parent.location.search = newSearch;
     }
 })();
 </script>
 """, height=0)
 
-# ── Session ID: read from query params or generate new ───────────────────────
+# ── Session ID + User ID: read from query params or generate ─────────────────
+if "user_id" not in st.session_state:
+    qu = st.query_params.get("user")
+    st.session_state.user_id = qu if qu else f"u_{uuid.uuid4().hex[:8]}"
+
 if "session_id" not in st.session_state:
     qp = st.query_params.get("session")
     st.session_state.session_id = qp if qp else str(uuid.uuid4())[:8]
@@ -134,6 +151,7 @@ if "session_id" not in st.session_state:
 def switch_session(new_id: str):
     st.session_state.session_id = new_id
     st.query_params["session"] = new_id
+    st.query_params["user"] = st.session_state.user_id
 
 
 def _stub_model(model_id: str):
@@ -257,7 +275,7 @@ with st.sidebar:
     st.divider()
     st.caption("Chat History")
 
-    sessions = list_sessions()
+    sessions = list_sessions(st.session_state.user_id)
     current_id = st.session_state.session_id
 
     for s in sessions:
@@ -271,7 +289,7 @@ with st.sidebar:
                 st.rerun()
         with col2:
             if st.button("🗑️", key=f"del_{s['id']}", help="Delete"):
-                FileChatMessageHistory(s["id"]).clear()
+                FileChatMessageHistory(st.session_state.user_id, s["id"]).clear()
                 if is_active:
                     switch_session(str(uuid.uuid4())[:8])
                 st.rerun()
@@ -335,7 +353,7 @@ llm = get_llm(selected_model_id, st.session_state.thinking_enabled)
 # ── Main chat area ─────────────────────────────────────────────────────────────────
 st.title("🤖 AI Chatbot")
 
-history = FileChatMessageHistory(st.session_state.session_id)
+history = FileChatMessageHistory(st.session_state.user_id, st.session_state.session_id)
 
 for msg in history.messages:
     role = "user" if msg.type == "human" else "assistant"
@@ -398,7 +416,7 @@ if prompt := st.chat_input("Type a message...", key="main_chat_input"):
         full_response = ""
 
         # Build message list: history with images stripped + current message with image
-        hist_obj = FileChatMessageHistory(st.session_state.session_id)
+        hist_obj = FileChatMessageHistory(st.session_state.user_id, st.session_state.session_id)
         past = [strip_images(m) for m in hist_obj.messages]
         messages_to_send = past + [user_message]
 
