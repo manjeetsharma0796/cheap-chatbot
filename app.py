@@ -102,96 +102,17 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── localStorage JS ───────────────────────────────────────────────────────────
-# JS is the SOLE authority for writing user_id + session_id into the URL on
-# initial load.  Python never writes query params on first render — doing so
-# would race with JS and overwrite the localStorage-stored session with a new
-# random one, losing the user's history.
-#
-# Flow:
-#   1. User visits bare URL (no ?user= or ?session=)
-#   2. JS reads localStorage → builds correct params → redirects (<100 ms)
-#   3. Python re-runs with full params in URL → loads history as normal
-#   4. On refresh: URL already has params (Python set them via switch_session)
-#      → JS just syncs localStorage, no redirect needed
-st.components.v1.html("""
-<script>
-(function() {
-    const params = new URLSearchParams(window.parent.location.search);
-    let changed = false;
-
-    // ── user_id: stable per browser, never changes ───────────────────────────
-    let userId = localStorage.getItem('ai_chat_user_id');
-    if (!userId) {
-        userId = 'u_' + Math.random().toString(36).slice(2, 10);
-        localStorage.setItem('ai_chat_user_id', userId);
-    }
-    if (!params.get('user')) {
-        params.set('user', userId);
-        changed = true;
-    }
-
-    // ── session_id: restore from localStorage or mint a new one ─────────────
-    let sessionId = params.get('session');
-    if (!sessionId) {
-        // No session in URL — check localStorage first, then create fresh
-        sessionId = localStorage.getItem('ai_chat_session_id');
-        if (!sessionId) {
-            sessionId = Math.random().toString(36).slice(2, 10);
-        }
-        params.set('session', sessionId);
-        changed = true;
-    }
-    // Always keep localStorage in sync with whatever session is active in URL
-    localStorage.setItem('ai_chat_session_id', sessionId);
-
-    if (changed) {
-        window.parent.location.search = params.toString();
-    }
-})();
-</script>
-""", height=0)
-
-# ── Session ID + User ID: read ONLY from URL (JS wrote them above) ────────────
-# If params are missing, JS redirect is still in flight — show a spinner and
-# halt. The page reloads with correct params in < 200 ms.
-if "user_id" not in st.session_state or "session_id" not in st.session_state:
-    _qu = st.query_params.get("user")
+# ── Session ID ───────────────────────────────────────────────────────────────
+if "session_id" not in st.session_state:
     _qs = st.query_params.get("session")
-    if not _qu or not _qs:
-        st.markdown(
-            """
-            <style>
-            #loading-wrap {
-                display: flex; flex-direction: column;
-                align-items: center; justify-content: center;
-                height: 80vh; gap: 16px;
-            }
-            .spinner {
-                width: 40px; height: 40px;
-                border: 4px solid rgba(255,255,255,0.15);
-                border-top-color: #e63946;
-                border-radius: 50%;
-                animation: spin 0.7s linear infinite;
-            }
-            @keyframes spin { to { transform: rotate(360deg); } }
-            </style>
-            <div id="loading-wrap">
-                <div class="spinner"></div>
-                <span style="opacity:0.5;font-size:0.9rem;">Starting session…</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.stop()
-    st.session_state.user_id    = _qu
-    st.session_state.session_id = _qs
+    st.session_state.session_id = _qs if _qs else uuid.uuid4().hex[:8]
+    if not _qs:
+        st.query_params["session"] = st.session_state.session_id
 
 
 def switch_session(new_id: str):
     st.session_state.session_id = new_id
     st.query_params["session"] = new_id
-    st.query_params["user"] = st.session_state.user_id
 
 
 def _stub_model(model_id: str):
@@ -315,7 +236,7 @@ with st.sidebar:
     st.divider()
     st.caption("Chat History")
 
-    sessions = list_sessions(st.session_state.user_id)
+    sessions = list_sessions()
     current_id = st.session_state.session_id
 
     for s in sessions:
@@ -329,7 +250,7 @@ with st.sidebar:
                 st.rerun()
         with col2:
             if st.button("🗑️", key=f"del_{s['id']}", help="Delete"):
-                FileChatMessageHistory(st.session_state.user_id, s["id"]).clear()
+                FileChatMessageHistory(s["id"]).clear()
                 if is_active:
                     switch_session(str(uuid.uuid4())[:8])
                 st.rerun()
@@ -393,7 +314,7 @@ llm = get_llm(selected_model_id, st.session_state.thinking_enabled)
 # ── Main chat area ─────────────────────────────────────────────────────────────────
 st.title("🤖 AI Chatbot")
 
-history = FileChatMessageHistory(st.session_state.user_id, st.session_state.session_id)
+history = FileChatMessageHistory(st.session_state.session_id)
 
 for msg in history.messages:
     role = "user" if msg.type == "human" else "assistant"
@@ -456,7 +377,7 @@ if prompt := st.chat_input("Type a message...", key="main_chat_input"):
         full_response = ""
 
         # Build message list: history with images stripped + current message with image
-        hist_obj = FileChatMessageHistory(st.session_state.user_id, st.session_state.session_id)
+        hist_obj = FileChatMessageHistory(st.session_state.session_id)
         past = [strip_images(m) for m in hist_obj.messages]
         messages_to_send = past + [user_message]
 
