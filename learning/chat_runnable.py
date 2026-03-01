@@ -1,8 +1,11 @@
+import os
+from dotenv import load_dotenv
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
-api = "***REMOVED_NVIDIA_API_KEY***"
+load_dotenv()
+api = os.getenv("NVIDIA_API_KEY")
 
 llm = ChatNVIDIA(model="z-ai/glm4.7", 
                    api_key=api,

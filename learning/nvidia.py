@@ -1,7 +1,10 @@
 ## Core LC Chat Interface
+import os
+from dotenv import load_dotenv
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
-api = "***REMOVED_NVIDIA_API_KEY***"
+load_dotenv()
+api = os.getenv("NVIDIA_API_KEY")
 
 llm = ChatNVIDIA(model="meta/llama-3.2-90b-vision-instruct", 
                    temperature=0.7, 
