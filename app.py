@@ -4,7 +4,11 @@ warnings.filterwarnings("ignore")
 import os
 import uuid
 import streamlit as st
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv():
+        return False
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
